@@ -1,6 +1,13 @@
 import { useState, useCallback } from 'react';
 import { PocketChestAPI } from '@/lib/api';
-import { TextItem, ValidityDays, MultipartUploadProgress, FileUploadProgress } from '@/lib/types';
+import { TextItem, ValidityDays, MultipartUploadProgress, FileUploadProgress, UploadedFile } from '@/lib/types';
+
+export interface UploadOptions {
+  // false: upload into the open chest without generating a code, so more files can be added
+  finalize?: boolean;
+  // Files uploaded to this chest by earlier "add more" uploads, included when finalizing
+  priorFileIds?: string[];
+}
 
 export function usePocketChest() {
   const [isUploading, setIsUploading] = useState(false);
@@ -106,8 +113,9 @@ export function usePocketChest() {
     uploadToken: string,
     files: File[],
     textItems: TextItem[],
-    validityDays: ValidityDays = 7
-  ) => {
+    validityDays: ValidityDays = 7,
+    { finalize = true, priorFileIds = [] }: UploadOptions = {}
+  ): Promise<{ retrievalCode?: string; expiryDate?: string; uploadedFiles: UploadedFile[] }> => {
     // Create new abort controller for this upload session
     const controller = new AbortController();
     setAbortController(controller);
@@ -137,8 +145,15 @@ export function usePocketChest() {
       
       // Upload complete, now finalizing
       setUploadProgress({ percentage: 100, loaded: finalProgress.total, total: finalProgress.total });
+
+      if (!finalize) {
+        // Keep the chest open; the page lists what's in it so far
+        setUploadStatus('idle');
+        setAbortController(null);
+        return { uploadedFiles };
+      }
       
-      const fileIds = uploadedFiles.map(f => f.fileId);
+      const fileIds = [...priorFileIds, ...uploadedFiles.map(f => f.fileId)];
       const result = await api.completeUpload(
         sessionId,
         uploadToken,
@@ -169,7 +184,8 @@ export function usePocketChest() {
     uploadToken: string,
     files: File[],
     textItems: TextItem[],
-    validityDays: ValidityDays = 7
+    validityDays: ValidityDays = 7,
+    options: UploadOptions = {}
   ) => {
     // Reset state completely before retry
     if (abortController) {
@@ -182,7 +198,7 @@ export function usePocketChest() {
     setUploadProgress({ percentage: 0, loaded: 0, total: 0 });
     setFileProgress([]);
     
-    return uploadWithSession(sessionId, uploadToken, files, textItems, validityDays);
+    return uploadWithSession(sessionId, uploadToken, files, textItems, validityDays, options);
   }, [uploadWithSession, abortController]);
 
   const cancelUpload = useCallback(() => {

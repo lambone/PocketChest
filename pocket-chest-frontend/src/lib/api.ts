@@ -141,15 +141,9 @@ export class PocketChestAPI {
     // Upload small files with rolling concurrency (max 3 at a time)
     if (smallFiles.length > 0) {
       const MAX_CONCURRENT_SMALL_FILES = 3;
-      let activeUploads = 0;
       let fileIndex = 0;
       
-      const uploadNextFile = async (): Promise<void> => {
-        if (fileIndex >= smallFiles.length) return;
-        
-        const file = smallFiles[fileIndex++];
-        activeUploads++;
-        
+      const uploadFile = async (file: File): Promise<void> => {
         // Mark file as starting
         const fileProgress = fileProgressMap.get(file.name);
         if (fileProgress) {
@@ -217,32 +211,27 @@ export class PocketChestAPI {
           }
           updateFileProgress();
           throw error;
-          
-        } finally {
-          activeUploads--;
-          
-          // Start next file if available and under limit
-          if (fileIndex < smallFiles.length && activeUploads < MAX_CONCURRENT_SMALL_FILES) {
-            uploadNextFile();
+        }
+      };
+      
+      // Each worker pulls the next file from the shared queue until it's empty, so at most
+      // MAX_CONCURRENT_SMALL_FILES uploads run at once and Promise.all waits for every file.
+      // After a failure, workers stop taking new files so the error surfaces promptly.
+      let failed = false;
+      const worker = async (): Promise<void> => {
+        while (!failed && fileIndex < smallFiles.length) {
+          const file = smallFiles[fileIndex++];
+          try {
+            await uploadFile(file);
+          } catch (error) {
+            failed = true;
+            throw error;
           }
         }
       };
       
-      // Start initial uploads (up to 3)
-      const initialUploads = Math.min(MAX_CONCURRENT_SMALL_FILES, smallFiles.length);
-      const uploadPromises: Promise<void>[] = [];
-      
-      for (let i = 0; i < initialUploads; i++) {
-        uploadPromises.push(uploadNextFile());
-      }
-      
-      // Wait for all small files to complete
-      await Promise.all(uploadPromises);
-      
-      // Process any remaining files (this handles the rolling uploads)
-      while (fileIndex < smallFiles.length) {
-        await uploadNextFile();
-      }
+      const workerCount = Math.min(MAX_CONCURRENT_SMALL_FILES, smallFiles.length);
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
     }
 
     // Upload large files using multipart upload sequentially
@@ -409,6 +398,9 @@ export class PocketChestAPI {
     if (!response.ok) {
       if (response.status === 404) {
         throw new Error('Retrieval code not found or expired');
+      }
+      if (response.status === 429) {
+        throw new Error('Too many attempts, please wait a minute and try again');
       }
       throw new Error('Failed to retrieve chest');
     }

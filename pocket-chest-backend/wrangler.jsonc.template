@@ -46,4 +46,23 @@
 	"triggers": {
 		"crons": ["0 * * * *"],
 	},
+	// Per-IP rate limits on endpoints that accept guessable codes.
+	// namespace_id is any integer string unique within your Cloudflare account.
+	// (Declared under "unsafe" because wrangler 4.29 doesn't support the top-level "ratelimits" field.)
+	"unsafe": {
+		"bindings": [
+			{
+				"name": "TOTP_RATE_LIMITER",
+				"type": "ratelimit",
+				"namespace_id": "1001",
+				"simple": { "limit": 10, "period": 60 },
+			},
+			{
+				"name": "RETRIEVE_RATE_LIMITER",
+				"type": "ratelimit",
+				"namespace_id": "1002",
+				"simple": { "limit": 30, "period": 60 },
+			},
+		],
+	},
 }

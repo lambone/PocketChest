@@ -129,6 +129,38 @@ describe('Authentication & Authorization', () => {
 			expect(data).toHaveProperty('uploadToken');
 		});
 
+		it('should reject a replayed TOTP token', async () => {
+			const validToken = await generateTOTP(TEST_TOTP_SECRET);
+			const create = () =>
+				testFetch('http://example.com/api/chest', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ totpToken: validToken }),
+				});
+
+			expect((await create()).status).toBe(200);
+
+			const replay = await create();
+			expect(replay.status).toBe(401);
+			const data = (await replay.json()) as any;
+			expect(data.error).toBe('TOTP token already used, wait for the next code');
+		});
+
+		it('should return 429 when the chest creation rate limit is hit', async () => {
+			const original = env.TOTP_RATE_LIMITER;
+			env.TOTP_RATE_LIMITER = { limit: async () => ({ success: false }) };
+			try {
+				const response = await testFetch('http://example.com/api/chest', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ totpToken: await generateTOTP(TEST_TOTP_SECRET) }),
+				});
+				expect(response.status).toBe(429);
+			} finally {
+				env.TOTP_RATE_LIMITER = original;
+			}
+		});
+
 		it('should handle missing TOTP_SECRETS configuration', async () => {
 			// Temporarily remove TOTP secrets while keeping TOTP required
 			const originalSecrets = env.TOTP_SECRETS;

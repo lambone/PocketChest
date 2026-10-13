@@ -1,4 +1,6 @@
+import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { generateRetrievalCode, isValidRetrievalCode } from '../src/utils';
 import { setupDatabase, setupTestEnvironment, createTestSession, testFetch } from './utils/test-setup';
 
 describe('GET /api/retrieve/:retrievalCode - Get Chest Contents', () => {
@@ -122,5 +124,22 @@ describe('GET /api/retrieve/:retrievalCode - Get Chest Contents', () => {
 		expect(data.chestToken).toBeDefined();
 		expect(typeof data.chestToken).toBe('string');
 		expect(data.chestToken.split('.')).toHaveLength(3); // JWT format
+	});
+
+	it('should return 429 when the retrieval rate limit is hit', async () => {
+		const original = env.RETRIEVE_RATE_LIMITER;
+		env.RETRIEVE_RATE_LIMITER = { limit: async () => ({ success: false }) };
+		try {
+			const response = await testFetch('http://example.com/api/retrieve/ABC123', { method: 'GET' });
+			expect(response.status).toBe(429);
+		} finally {
+			env.RETRIEVE_RATE_LIMITER = original;
+		}
+	});
+
+	it('should generate well-formed retrieval codes', () => {
+		for (let i = 0; i < 200; i++) {
+			expect(isValidRetrievalCode(generateRetrievalCode())).toBe(true);
+		}
 	});
 });

@@ -12,6 +12,8 @@ import {
   FileUploadProgress,
 } from './types';
 
+const CHEST_TOO_LARGE_MESSAGE = 'These files exceed the maximum chest size';
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://localhost:8787';
 
 export class PocketChestAPI {
@@ -336,6 +338,8 @@ export class PocketChestAPI {
             } catch (error) {
               reject(new Error('Failed to parse response'));
             }
+          } else if (xhr.status === 413) {
+            reject(new Error(CHEST_TOO_LARGE_MESSAGE));
           } else {
             reject(new Error(`Upload failed with status ${xhr.status}`));
           }
@@ -361,7 +365,7 @@ export class PocketChestAPI {
     });
 
     if (!response.ok) {
-      throw new Error('Failed to upload files');
+      throw new Error(response.status === 413 ? CHEST_TOO_LARGE_MESSAGE : 'Failed to upload files');
     }
 
     return response.json();
@@ -482,7 +486,7 @@ export class PocketChestAPI {
     });
 
     if (!response.ok) {
-      throw new Error('Failed to create multipart upload');
+      throw new Error(response.status === 413 ? CHEST_TOO_LARGE_MESSAGE : 'Failed to create multipart upload');
     }
 
     return response.json();
@@ -564,7 +568,7 @@ export class PocketChestAPI {
     });
 
     if (!response.ok) {
-      throw new Error('Failed to complete multipart upload');
+      throw new Error(response.status === 413 ? CHEST_TOO_LARGE_MESSAGE : 'Failed to complete multipart upload');
     }
 
     return response.json();

@@ -26,6 +26,7 @@ import {
 	calculateExpiry,
 	getCurrentTimestamp,
 	verifyAnyTOTP,
+	contentDisposition,
 } from './utils';
 
 export default {
@@ -52,6 +53,9 @@ export default {
 			}
 
 			if (path === '/api/chest' && request.method === 'POST') {
+				if (await isRateLimited(env.TOTP_RATE_LIMITER, request)) {
+					return tooManyRequests(corsHeaders);
+				}
 				return await handleCreateChest(request, env, corsHeaders);
 			}
 
@@ -86,6 +90,9 @@ export default {
 
 			if (path.match(/^\/api\/retrieve\/[^\/]+$/) && request.method === 'GET') {
 				const retrievalCode = path.split('/')[3];
+				if (await isRateLimited(env.RETRIEVE_RATE_LIMITER, request)) {
+					return tooManyRequests(corsHeaders);
+				}
 				return await handleRetrieveChest(env, retrievalCode, corsHeaders);
 			}
 
@@ -117,6 +124,22 @@ export default {
 		}
 	},
 } satisfies ExportedHandler<Env>;
+
+// Per-IP rate limiting for endpoints that accept guessable secrets (TOTP codes, retrieval codes).
+// The limiter bindings are optional so local dev and tests work without them.
+async function isRateLimited(limiter: RateLimit | undefined, request: Request): Promise<boolean> {
+	if (!limiter) return false;
+	const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+	const { success } = await limiter.limit({ key: ip });
+	return !success;
+}
+
+function tooManyRequests(corsHeaders: Record<string, string>): Response {
+	return new Response(JSON.stringify({ error: 'Too many requests, please try again later' }), {
+		status: 429,
+		headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' },
+	});
+}
 
 // GET /api/config - Get server configuration
 async function handleGetConfig(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
@@ -162,9 +185,27 @@ async function handleCreateChest(request: Request, env: Env, corsHeaders: Record
 			});
 		}
 
-		const isValidTOTP = await verifyAnyTOTP(requestBody.totpToken, env.TOTP_SECRETS);
-		if (!isValidTOTP) {
+		const match = await verifyAnyTOTP(requestBody.totpToken, env.TOTP_SECRETS);
+		if (!match) {
 			return new Response(JSON.stringify({ error: 'Invalid TOTP token' }), {
+				status: 401,
+				headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+			});
+		}
+
+		// Reject replays: each secret's time step can be used once, and never an older one.
+		// The conditional upsert is atomic, so two concurrent requests with the same code can't both succeed.
+		const claim = await env.DB.prepare(
+			`
+			INSERT INTO totp_used (secret_name, last_step) VALUES (?, ?)
+			ON CONFLICT(secret_name) DO UPDATE SET last_step = excluded.last_step
+			WHERE excluded.last_step > totp_used.last_step
+		`,
+		)
+			.bind(match.name, match.timeStep)
+			.run();
+		if (claim.meta.changes !== 1) {
+			return new Response(JSON.stringify({ error: 'TOTP token already used, wait for the next code' }), {
 				status: 401,
 				headers: { ...corsHeaders, 'Content-Type': 'application/json' },
 			});
@@ -523,7 +564,7 @@ async function handleDownloadFile(request: Request, env: Env, fileId: string, co
 		headers: {
 			...corsHeaders,
 			'Content-Type': fileWithSession.mime_type as string,
-			'Content-Disposition': `attachment; filename="${downloadFilename}"`,
+			'Content-Disposition': contentDisposition(downloadFilename),
 			'Content-Length': String(fileWithSession.file_size),
 		},
 	});

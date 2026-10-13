@@ -80,6 +80,8 @@ Update `pocket-chest-backend/wrangler.jsonc` with the bucket binding:
 wrangler d1 execute pocket-chest --file=src/schema.sql --remote
 ```
 
+> **Upgrading an existing deployment?** Re-run the command above before deploying. It only creates missing tables, and chest creation with TOTP fails until the `totp_used` table exists. Also copy the `unsafe.bindings` rate-limit block from `wrangler.jsonc.template` into your `wrangler.jsonc`; without it, rate limiting is silently disabled.
+
 ### 3. Configure Custom Domain (Optional)
 
 **Using Routes in wrangler.jsonc**

@@ -75,6 +75,19 @@ describe('GET /api/download/:fileId - Download File', () => {
 		expect(content).toBe('download test content');
 	});
 
+	it('should encode non-ASCII and quote characters in Content-Disposition', async () => {
+		const filename = '报告 "final".pdf';
+		const response = await testFetch(
+			`http://example.com/api/download/${fileId}?token=${chestToken}&filename=${encodeURIComponent(filename)}`,
+			{ method: 'GET' },
+		);
+
+		expect(response.status).toBe(200);
+		const disposition = response.headers.get('Content-Disposition');
+		expect(disposition).toBe(`attachment; filename="__ _final_.pdf"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+		await response.text();
+	});
+
 	it('should download text files correctly', async () => {
 		const response = await testFetch(`http://example.com/api/download/${textFileId}`, {
 			method: 'GET',

@@ -30,6 +30,10 @@ export async function setupDatabase() {
 		`CREATE INDEX IF NOT EXISTS idx_sessions_retrieval_code ON sessions(retrieval_code)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expiry_date)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_session_id ON files(session_id)`,
+		`CREATE TABLE IF NOT EXISTS totp_used (
+      secret_name TEXT PRIMARY KEY,
+      last_step INTEGER NOT NULL
+    )`,
 	];
 
 	// Use batch for schema creation for better performance
@@ -37,11 +41,16 @@ export async function setupDatabase() {
 	await env.DB.batch(schemaOperations);
 }
 
+const allowAllRateLimiter: RateLimit = { limit: async () => ({ success: true }) };
+
 export async function setupTestEnvironment() {
 	// Set environment variables for each test
 	env.JWT_SECRET = TEST_JWT_SECRET;
 	env.TOTP_SECRETS = TEST_TOTP_SECRETS;
 	env.REQUIRE_TOTP = 'false'; // Disable TOTP for most tests unless specifically testing it
+	// The real rate limiters would trip across a test file; tests that check limiting override these
+	env.TOTP_RATE_LIMITER = allowAllRateLimiter;
+	env.RETRIEVE_RATE_LIMITER = allowAllRateLimiter;
 
 	await cleanupDatabase();
 }
@@ -49,6 +58,7 @@ export async function setupTestEnvironment() {
 export async function cleanupDatabase() {
 	await env.DB.prepare('DELETE FROM files').run();
 	await env.DB.prepare('DELETE FROM sessions').run();
+	await env.DB.prepare('DELETE FROM totp_used').run();
 }
 
 // Wrapper for fetch that ensures proper environment variable handling

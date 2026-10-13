@@ -129,4 +129,6 @@ export interface Env {
 	JWT_SECRET: string;
 	TOTP_SECRETS?: string; // Format: "name1:secret1,name2:secret2"
 	REQUIRE_TOTP?: string; // "true" to require TOTP authentication
+	TOTP_RATE_LIMITER?: RateLimit; // Per-IP limit on POST /api/chest
+	RETRIEVE_RATE_LIMITER?: RateLimit; // Per-IP limit on GET /api/retrieve/:code
 }

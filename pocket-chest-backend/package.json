@@ -7,6 +7,7 @@
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
+		"pretest": "node -e \"const fs=require('fs');fs.existsSync('wrangler.jsonc')||fs.copyFileSync('wrangler.jsonc.template','wrangler.jsonc')\"",
 		"test": "vitest run",
 		"cf-typegen": "wrangler types",
 		"generate-totp": "node scripts/generate-totp.js",

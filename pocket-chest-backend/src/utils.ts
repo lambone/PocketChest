@@ -82,18 +82,29 @@ export async function generateTOTP(secret: string, timeStep: number = Math.floor
 	return code.toString().padStart(6, '0');
 }
 
-export async function verifyTOTP(token: string, secret: string, window: number = 1): Promise<boolean> {
+// Constant-time string comparison to avoid leaking how many leading characters matched
+export function timingSafeEqual(a: string, b: string): boolean {
+	if (a.length !== b.length) return false;
+	let diff = 0;
+	for (let i = 0; i < a.length; i++) {
+		diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+	}
+	return diff === 0;
+}
+
+// Returns the matching time step, or null if the token is invalid
+export async function verifyTOTP(token: string, secret: string, window: number = 1): Promise<number | null> {
 	const currentTime = Math.floor(Date.now() / 1000 / 30);
 
 	// Check current time and ±window steps
 	for (let i = -window; i <= window; i++) {
 		const expectedToken = await generateTOTP(secret, currentTime + i);
-		if (token === expectedToken) {
-			return true;
+		if (timingSafeEqual(token, expectedToken)) {
+			return currentTime + i;
 		}
 	}
 
-	return false;
+	return null;
 }
 
 export function parseTOTPSecrets(secretsEnv: string): Map<string, string> {
@@ -113,16 +124,18 @@ export function parseTOTPSecrets(secretsEnv: string): Map<string, string> {
 	return secrets;
 }
 
-export async function verifyAnyTOTP(token: string, secretsEnv: string): Promise<boolean> {
+// Returns the matching secret name and time step, or null if no secret accepts the token
+export async function verifyAnyTOTP(token: string, secretsEnv: string): Promise<{ name: string; timeStep: number } | null> {
 	const secrets = parseTOTPSecrets(secretsEnv);
 
-	for (const [_name, secret] of secrets) {
-		if (await verifyTOTP(token, secret)) {
-			return true;
+	for (const [name, secret] of secrets) {
+		const timeStep = await verifyTOTP(token, secret);
+		if (timeStep !== null) {
+			return { name, timeStep };
 		}
 	}
 
-	return false;
+	return null;
 }
 
 // Generate UUID v4
@@ -133,9 +146,17 @@ export function generateUUID(): string {
 // Generate 6-character alphanumeric retrieval code
 export function generateRetrievalCode(): string {
 	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+	// Rejection sampling: 252 is the largest multiple of 36 below 256, so every char is equally likely
+	const limit = 256 - (256 % chars.length);
 	let result = '';
-	for (let i = 0; i < 6; i++) {
-		result += chars.charAt(Math.floor(Math.random() * chars.length));
+	const buffer = new Uint8Array(16);
+	while (result.length < 6) {
+		crypto.getRandomValues(buffer);
+		for (const byte of buffer) {
+			if (byte < limit && result.length < 6) {
+				result += chars[byte % chars.length];
+			}
+		}
 	}
 	return result;
 }
@@ -309,6 +330,16 @@ export function calculateExpiry(validityDays: number): number | null {
 		return null; // Permanent
 	}
 	return Math.floor(Date.now() / 1000) + validityDays * 24 * 60 * 60;
+}
+
+// Build a Content-Disposition header that is safe for any filename (RFC 6266 / RFC 5987).
+// Header values must be Latin-1, so non-ASCII names go in filename*, with an ASCII fallback in filename.
+export function contentDisposition(filename: string): string {
+	// eslint-disable-next-line no-control-regex
+	const cleaned = filename.replace(/[\x00-\x1f\x7f]/g, '').trim() || 'download';
+	const asciiFallback = cleaned.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+	const encoded = encodeURIComponent(cleaned).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+	return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
 }
 
 // Get current timestamp

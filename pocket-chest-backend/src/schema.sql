@@ -25,3 +25,9 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_sessions_retrieval_code ON sessions(retrieval_code);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expiry_date);
 CREATE INDEX IF NOT EXISTS idx_files_session_id ON files(session_id);
+
+-- Last accepted TOTP time step per secret, to reject replayed codes
+CREATE TABLE IF NOT EXISTS totp_used (
+    secret_name TEXT PRIMARY KEY,
+    last_step INTEGER NOT NULL
+);

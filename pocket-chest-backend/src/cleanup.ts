@@ -1,9 +1,9 @@
 import { Env } from './types';
 import { getCurrentTimestamp } from './utils';
 
-// Sessions handled per cron run; the rest wait for the next hourly run. Keeps each run well under the
-// per-invocation subrequest limit when there's a backlog.
-const CLEANUP_BATCH_SIZE = 50;
+// Sessions handled per cron run; the rest wait for the next daily run. About 3 subrequests per session,
+// so this keeps each run well under the 1,000 per-invocation limit when there's a backlog.
+export const CLEANUP_BATCH_SIZE = 200;
 
 // Incomplete sessions are kept until no token can still write to them: the upload token lasts 24h and a
 // multipart token created at the end of that lasts another 48h.
@@ -25,7 +25,7 @@ async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<number>
 	return deleted;
 }
 
-// Cleanup expired content (runs every hour via cron)
+// Cleanup expired content (runs daily via cron)
 export async function cleanupExpiredContent(env: Env): Promise<{
 	expiredSessions: number;
 	deletedFiles: number;

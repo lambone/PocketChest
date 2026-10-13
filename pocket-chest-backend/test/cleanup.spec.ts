@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { setupDatabase, setupTestEnvironment } from './utils/test-setup';
-import { cleanupExpiredContent } from '../src/cleanup';
+import { cleanupExpiredContent, CLEANUP_BATCH_SIZE } from '../src/cleanup';
 import { generateUUID, getCurrentTimestamp } from '../src/utils';
 
 const HOUR = 60 * 60;
@@ -91,14 +91,19 @@ describe('Scheduled cleanup', () => {
 		expect(await sessionExists(stale)).toBe(false);
 	});
 
-	it('should process at most 50 sessions per run', async () => {
+	it('should process at most CLEANUP_BATCH_SIZE sessions per run', async () => {
 		const now = getCurrentTimestamp();
-		for (let i = 0; i < 55; i++) {
-			await insertSession({ complete: true, createdAt: now - 10 * HOUR, expiryDate: now - HOUR - i });
-		}
+		const total = CLEANUP_BATCH_SIZE + 5;
+		await env.DB.batch(
+			Array.from({ length: total }, (_, i) =>
+				env.DB.prepare(
+					`INSERT INTO sessions (session_id, retrieval_code, upload_complete, expiry_date, created_at, updated_at) VALUES (?, ?, TRUE, ?, ?, ?)`,
+				).bind(generateUUID(), `C${String(i).padStart(5, '0')}`, now - HOUR - i, now - 10 * HOUR, now - 10 * HOUR),
+			),
+		);
 
 		const first = await cleanupExpiredContent(env);
-		expect(first.expiredSessions).toBe(50);
+		expect(first.expiredSessions).toBe(CLEANUP_BATCH_SIZE);
 
 		const second = await cleanupExpiredContent(env);
 		expect(second.expiredSessions).toBe(5);

@@ -154,6 +154,33 @@ export default function SharePage() {
     }
   };
 
+  // A session is finished once its retrieval code is issued, so sharing more
+  // files needs a new session (and a fresh TOTP code when TOTP is required)
+  const startNewSession = async () => {
+    setUploadResult(null);
+    setCopied(false);
+    clearError();
+    setSessionData(null);
+    setIsAuthenticated(false);
+
+    if (requireTOTP) {
+      setTotpError('');
+      setShowTOTPModal(true);
+      return;
+    }
+
+    setIsAuthenticating(true);
+    try {
+      const session = await api.createChest();
+      setSessionData({ sessionId: session.sessionId, uploadToken: session.uploadToken });
+      setIsAuthenticated(true);
+    } catch (error) {
+      console.error('Failed to create session:', error);
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
   const handleCancel = () => {
     cancelUpload();
     // Reset local page state
@@ -261,10 +288,7 @@ export default function SharePage() {
               
               <div className="space-y-3">
                 <button
-                  onClick={() => {
-                    setUploadResult(null);
-                    clearError();
-                  }}
+                  onClick={startNewSession}
                   className="w-full py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold"
                 >
                   Share More Files

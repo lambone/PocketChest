@@ -13,6 +13,7 @@ import {
 } from './types';
 
 const CHEST_TOO_LARGE_MESSAGE = 'These files exceed the maximum chest size';
+const SESSION_ENDED_MESSAGE = 'This upload session has ended. Please start a new share.';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://localhost:8787';
 
@@ -340,6 +341,8 @@ export class PocketChestAPI {
             }
           } else if (xhr.status === 413) {
             reject(new Error(CHEST_TOO_LARGE_MESSAGE));
+          } else if (xhr.status === 404) {
+            reject(new Error(SESSION_ENDED_MESSAGE));
           } else {
             reject(new Error(`Upload failed with status ${xhr.status}`));
           }
@@ -365,7 +368,11 @@ export class PocketChestAPI {
     });
 
     if (!response.ok) {
-      throw new Error(response.status === 413 ? CHEST_TOO_LARGE_MESSAGE : 'Failed to upload files');
+      throw new Error(
+        response.status === 413 ? CHEST_TOO_LARGE_MESSAGE
+          : response.status === 404 ? SESSION_ENDED_MESSAGE
+          : 'Failed to upload files'
+      );
     }
 
     return response.json();

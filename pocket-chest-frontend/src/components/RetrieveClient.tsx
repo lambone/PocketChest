@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { usePocketChest } from '@/hooks/usePocketChest';
 import { PocketChestAPI } from '@/lib/api';
 import { FileInfo } from '@/lib/types';
@@ -209,13 +210,15 @@ export function RetrieveClient({ code, onBack }: RetrieveClientProps) {
               ← Enter Another Code
             </button>
           )}
-          <button
-            onClick={() => window.location.href = '/'}
-            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-          >
-            Upload Files
-          </button>
         </div>
+
+        {/* Secondary: this page is for downloading, so sharing is offered as a quiet link */}
+        <p className="mt-6 text-center text-sm text-gray-600">
+          Want to share your own files?{' '}
+          <Link href="/share" className="text-blue-600 hover:text-blue-800 font-medium">
+            Share files
+          </Link>
+        </p>
       </div>
     </main>
   );

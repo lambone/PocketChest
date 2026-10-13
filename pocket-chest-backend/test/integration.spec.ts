@@ -91,6 +91,7 @@ describe('Integration Tests', () => {
 		const createData = (await createResponse.json()) as any;
 
 		// 2. Create multipart upload
+		const partData = new TextEncoder().encode('End-to-end multipart content');
 		const multipartCreateResponse = await testFetch(`http://example.com/api/chest/${createData.sessionId}/multipart/create`, {
 			method: 'POST',
 			headers: {
@@ -100,13 +101,12 @@ describe('Integration Tests', () => {
 			body: JSON.stringify({
 				filename: 'e2e-multipart.txt',
 				mimeType: 'text/plain',
-				fileSize: 50,
+				fileSize: partData.length,
 			}),
 		});
 		const multipartCreateData = (await multipartCreateResponse.json()) as any;
 
 		// 3. Upload part
-		const partData = new TextEncoder().encode('End-to-end multipart content');
 		const uploadPartResponse = await testFetch(
 			`http://example.com/api/chest/${createData.sessionId}/multipart/${multipartCreateData.fileId}/part/1`,
 			{

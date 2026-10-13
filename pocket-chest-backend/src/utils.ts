@@ -324,6 +324,21 @@ export function isValidRetrievalCode(code: string): boolean {
 	return codeRegex.test(code);
 }
 
+// Validity options offered by the frontend (-1 = permanent)
+export const ALLOWED_VALIDITY_DAYS = [1, 3, 7, 15, -1];
+
+export function isValidValidityDays(value: unknown): value is number {
+	return typeof value === 'number' && ALLOWED_VALIDITY_DAYS.includes(value);
+}
+
+// Maximum total size of one chest; override with the MAX_CHEST_BYTES var
+export const DEFAULT_MAX_CHEST_BYTES = 50 * 1024 * 1024 * 1024; // 50 GiB
+
+export function getMaxChestBytes(configured: string | undefined): number {
+	const parsed = Number(configured);
+	return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_CHEST_BYTES;
+}
+
 // Calculate expiry timestamp
 export function calculateExpiry(validityDays: number): number | null {
 	if (validityDays === -1) {

@@ -152,6 +152,7 @@ describe('Multipart Upload', () => {
 
 	describe('POST /api/chest/:sessionId/multipart/:fileId/complete', () => {
 		it('should handle complete multipart upload workflow', async () => {
+			const partData = new TextEncoder().encode('This is part 1 of the multipart upload test file content.');
 			// 1. Create multipart upload
 			const createResponse = await testFetch(`http://example.com/api/chest/${sessionId}/multipart/create`, {
 				method: 'POST',
@@ -162,7 +163,7 @@ describe('Multipart Upload', () => {
 				body: JSON.stringify({
 					filename: 'test-multipart.txt',
 					mimeType: 'text/plain',
-					fileSize: 100,
+					fileSize: partData.length,
 				}),
 			});
 
@@ -172,7 +173,6 @@ describe('Multipart Upload', () => {
 			const multipartToken = createData.uploadId;
 
 			// 2. Upload part
-			const partData = new TextEncoder().encode('This is part 1 of the multipart upload test file content.');
 			const uploadPartResponse = await testFetch(`http://example.com/api/chest/${sessionId}/multipart/${fileId}/part/1`, {
 				method: 'PUT',
 				headers: {

@@ -53,7 +53,7 @@ function RetrievePageContent() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-green-50 via-white to-emerald-50 flex items-center justify-center p-4">
+    <main className="min-h-screen bg-linear-to-br from-green-50 via-white to-emerald-50 flex items-center justify-center p-4">
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
           <Link href="/" className="text-green-600 hover:text-green-800 text-sm">
@@ -114,7 +114,7 @@ function RetrievePageContent() {
         </div>
 
         <div className="mt-8 text-center">
-          <div className="bg-white rounded-lg p-4 shadow-sm">
+          <div className="bg-white rounded-lg p-4 shadow-xs">
             <h3 className="font-medium text-gray-900 mb-2">How it works:</h3>
             <div className="text-sm text-gray-600 space-y-1">
               <p>• Enter the 6-character code you received</p>
@@ -131,7 +131,7 @@ function RetrievePageContent() {
 export default function RetrievePage() {
   return (
     <Suspense fallback={
-      <main className="min-h-screen bg-gradient-to-br from-green-50 via-white to-emerald-50 flex items-center justify-center p-4">
+      <main className="min-h-screen bg-linear-to-br from-green-50 via-white to-emerald-50 flex items-center justify-center p-4">
         <div className="text-center">
           <div className="animate-spin text-4xl mb-4">⏳</div>
           <p className="text-xl">Loading...</p>

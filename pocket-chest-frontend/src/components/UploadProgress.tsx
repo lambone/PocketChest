@@ -200,7 +200,7 @@ export function UploadProgress({
                       : item.filename || `Text ${index + 1}`}
                   </span>
                   <span className="text-xs text-gray-500">({item.content.length} chars)</span>
-                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">TEXT</span>
+                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-sm">TEXT</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`text-xs font-medium capitalize ${

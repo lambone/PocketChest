@@ -1,6 +1,29 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/*
+  Keep Tailwind v3 defaults that v4 changed, so the UI looks the same:
+  borders default to gray-200 (v4: currentColor), buttons show a pointer
+  (v4: default cursor), and placeholders are gray-400 (v4: 50% currentColor).
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+}
 
 @layer utilities {
   .line-clamp-2 {

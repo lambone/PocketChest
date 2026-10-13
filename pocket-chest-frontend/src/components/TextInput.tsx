@@ -65,14 +65,14 @@ export function TextInput({ onTextItemsChange, textItems }: TextInputProps) {
                 value={currentFilename}
                 onChange={(e) => setCurrentFilename(e.target.value)}
                 placeholder={`Text ${textItems.length + 1}`}
-                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full p-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
             <div className="flex items-end">
               <button
                 onClick={addTextItem}
                 disabled={!currentText.trim()}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-blue-500 text-white rounded-sm hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 Add Text
               </button>
@@ -90,7 +90,7 @@ export function TextInput({ onTextItemsChange, textItems }: TextInputProps) {
               ? item.filename.slice(0, -4)
               : item.filename || `Text ${index + 1}`;
             return (
-              <div key={index} className="p-3 bg-gray-50 rounded">
+              <div key={index} className="p-3 bg-gray-50 rounded-sm">
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium">{displayName}</p>

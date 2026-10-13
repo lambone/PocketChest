@@ -167,6 +167,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Create wrangler.jsonc from template
+        run: cp -n wrangler.jsonc.template wrangler.jsonc
+
       - name: Verify Wrangler configuration
         run: npx wrangler deploy --dry-run --compatibility-date=2025-01-01
         env:

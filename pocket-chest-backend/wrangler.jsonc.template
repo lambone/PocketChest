@@ -6,7 +6,8 @@
  * 2. Replace <your-database-id> with your actual D1 database ID
  * 3. Update bucket_name if you used a different name
  * 4. Configure custom domain routes if needed
- * 5. The wrangler.jsonc file will be ignored by git for security
+ * 5. wrangler.jsonc is gitignored, so your real IDs are never committed
+ *    (`npm test` creates it from this template if it doesn't exist)
  *
  * For more details on configuration, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/

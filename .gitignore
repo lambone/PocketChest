@@ -22,6 +22,8 @@ build/Release
 
 # Secrets and configuration
 wrangler.toml
+# Holds real account/database IDs; copy wrangler.jsonc.template to create it
+pocket-chest-backend/wrangler.jsonc
 !wrangler.jsonc.template
 *.secret
 *.key

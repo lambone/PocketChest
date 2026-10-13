@@ -203,6 +203,8 @@ wrangler deploy
 # Cron job for cleanup is configured in wrangler.jsonc and deploys automatically
 ```
 
+**About cleanup:** the hourly job deletes expired chests and uploads left unfinished for 72 hours, up to 50 chests per run. It can't see large-file uploads that were started but never finished; R2's default bucket rule ("Abort incomplete multipart uploads after 7 days") removes those. Check that the rule exists with `wrangler r2 bucket lifecycle list pocket-chest`, and don't remove it.
+
 Your backend will be available at: `https://your-worker-name.your-subdomain.workers.dev` (or your custom domain if configured)
 
 ## Frontend Deployment (Cloudflare Pages)
@@ -295,6 +297,7 @@ To set up a custom domain for your frontend:
 | `JWT_SECRET` | Yes | Long random string for JWT signing |
 | `REQUIRE_TOTP` | Yes | Set to "true" to enable TOTP auth |
 | `TOTP_SECRETS` | If TOTP enabled | Comma-separated base32 TOTP secrets |
+| `MAX_CHEST_BYTES` | No | Maximum total bytes per chest (default 50 GiB) |
 
 ### Frontend (Environment Variables)
 | Variable | Required | Description |

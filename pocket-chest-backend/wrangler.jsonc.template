@@ -35,6 +35,8 @@
 	],
 	"vars": {
 		"REQUIRE_TOTP": "true",
+		// Maximum total size of one chest, in bytes (default 50 GiB)
+		"MAX_CHEST_BYTES": "53687091200",
 	},
 	// Uncomment and configure for custom domain:
 	// "routes": [

@@ -132,7 +132,7 @@ describe('POST /api/chest/:sessionId/complete - Complete Upload', () => {
 			body: 'invalid json{',
 		});
 
-		expect(response.status).toBe(500); // JSON parse errors are handled as 500 in this backend
+		expect(response.status).toBe(400);
 	});
 
 	it('should reject unauthorized requests', async () => {

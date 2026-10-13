@@ -27,7 +27,10 @@ import {
 	getCurrentTimestamp,
 	verifyAnyTOTP,
 	contentDisposition,
+	isValidValidityDays,
+	getMaxChestBytes,
 } from './utils';
+import { cleanupExpiredContent } from './cleanup';
 
 export default {
 	async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -103,8 +106,9 @@ export default {
 
 			return new Response('Not Found', { status: 404, headers: corsHeaders });
 		} catch (error) {
+			// Log the details, but don't leak internal error text (SQL, stack traces) to clients
 			console.error('Error:', error);
-			return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Internal Server Error' }), {
+			return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
 				status: 500,
 				headers: { ...corsHeaders, 'Content-Type': 'application/json' },
 			});
@@ -139,6 +143,36 @@ function tooManyRequests(corsHeaders: Record<string, string>): Response {
 		status: 429,
 		headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' },
 	});
+}
+
+// Parse a JSON request body, returning null instead of throwing on malformed input
+async function readJson<T>(request: Request): Promise<T | null> {
+	try {
+		return (await request.json()) as T;
+	} catch {
+		return null;
+	}
+}
+
+function badRequest(message: string, corsHeaders: Record<string, string>): Response {
+	return new Response(message, { status: 400, headers: corsHeaders });
+}
+
+function chestTooLarge(maxBytes: number, corsHeaders: Record<string, string>): Response {
+	return new Response(`Chest exceeds the maximum size of ${maxBytes} bytes`, { status: 413, headers: corsHeaders });
+}
+
+// Uploads are only accepted while the chest is still open (not yet completed)
+async function isSessionOpen(env: Env, sessionId: string): Promise<boolean> {
+	const session = await env.DB.prepare(`SELECT 1 FROM sessions WHERE session_id = ? AND upload_complete = FALSE`).bind(sessionId).first();
+	return session !== null;
+}
+
+async function getSessionBytes(env: Env, sessionId: string): Promise<number> {
+	const row = await env.DB.prepare(`SELECT COALESCE(SUM(file_size), 0) AS total FROM files WHERE session_id = ?`)
+		.bind(sessionId)
+		.first<{ total: number }>();
+	return row?.total ?? 0;
 }
 
 // GET /api/config - Get server configuration
@@ -275,63 +309,72 @@ async function handleUploadFiles(request: Request, env: Env, sessionId: string, 
 	}
 
 	// Parse multipart form data
-	const formData = await request.formData();
-	const uploadedFiles: Array<{ fileId: string; filename: string; isText: boolean }> = [];
-	const fileInserts: any[] = [];
-	const r2Operations: Promise<any>[] = [];
-	const timestamp = getCurrentTimestamp();
+	let formData: FormData;
+	try {
+		formData = await request.formData();
+	} catch {
+		return badRequest('Invalid form data', corsHeaders);
+	}
 
-	// Collect all file operations without executing database queries yet
+	// Validate everything before writing to storage, so a bad item doesn't leave partial uploads behind
+	type PendingItem = { body: ReadableStream | string; filename: string; mimeType: string; size: number; isText: boolean };
+	const items: PendingItem[] = [];
+
 	for (const [key, value] of formData.entries()) {
 		if (key === 'files' && value instanceof File) {
-			const fileId = generateUUID();
-			const filename = value.name || 'unnamed-file';
-			const mimeType = value.type || 'application/octet-stream';
-			const fileSize = value.size;
-
-			// Queue R2 operation
-			r2Operations.push(env.R2_STORAGE.put(`${sessionId}/${fileId}`, value.stream()));
-
-			// Queue database operation
-			fileInserts.push(
-				env.DB.prepare(
-					`
-					INSERT INTO files (file_id, session_id, original_filename, mime_type, file_size, file_extension, is_text, created_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-				`,
-				).bind(fileId, sessionId, filename, mimeType, fileSize, getFileExtension(filename), false, timestamp),
-			);
-
-			uploadedFiles.push({ fileId, filename, isText: false });
+			items.push({
+				body: value.stream(),
+				filename: value.name || 'unnamed-file',
+				mimeType: value.type || 'application/octet-stream',
+				size: value.size,
+				isText: false,
+			});
 		}
 	}
 
-	// Handle text items
-	const textItems = formData.getAll('textItems');
-	for (const textItem of textItems) {
-		if (typeof textItem === 'string') {
-			const textData = JSON.parse(textItem);
-			const fileId = generateUUID();
-			const filename = textData.filename || `text-${Date.now()}.txt`;
-			const content = textData.content;
-			const mimeType = 'text/plain';
-			const fileSize = new TextEncoder().encode(content).length;
-
-			// Queue R2 operation
-			r2Operations.push(env.R2_STORAGE.put(`${sessionId}/${fileId}`, content));
-
-			// Queue database operation
-			fileInserts.push(
-				env.DB.prepare(
-					`
-					INSERT INTO files (file_id, session_id, original_filename, mime_type, file_size, file_extension, is_text, created_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-				`,
-				).bind(fileId, sessionId, filename, mimeType, fileSize, getFileExtension(filename), true, timestamp),
-			);
-
-			uploadedFiles.push({ fileId, filename, isText: true });
+	for (const textItem of formData.getAll('textItems')) {
+		if (typeof textItem !== 'string') continue;
+		let textData: { content?: unknown; filename?: unknown };
+		try {
+			textData = JSON.parse(textItem);
+		} catch {
+			return badRequest('Invalid textItems JSON', corsHeaders);
 		}
+		if (typeof textData?.content !== 'string') {
+			return badRequest('Each text item needs a string content field', corsHeaders);
+		}
+		items.push({
+			body: textData.content,
+			filename: typeof textData.filename === 'string' && textData.filename ? textData.filename : `text-${Date.now()}.txt`,
+			mimeType: 'text/plain',
+			size: new TextEncoder().encode(textData.content).length,
+			isText: true,
+		});
+	}
+
+	const maxBytes = getMaxChestBytes(env.MAX_CHEST_BYTES);
+	const incomingBytes = items.reduce((sum, item) => sum + item.size, 0);
+	if ((await getSessionBytes(env, sessionId)) + incomingBytes > maxBytes) {
+		return chestTooLarge(maxBytes, corsHeaders);
+	}
+
+	const uploadedFiles: Array<{ fileId: string; filename: string; isText: boolean }> = [];
+	const fileInserts: D1PreparedStatement[] = [];
+	const r2Operations: Promise<R2Object | null>[] = [];
+	const timestamp = getCurrentTimestamp();
+
+	for (const item of items) {
+		const fileId = generateUUID();
+		r2Operations.push(env.R2_STORAGE.put(`${sessionId}/${fileId}`, item.body));
+		fileInserts.push(
+			env.DB.prepare(
+				`
+				INSERT INTO files (file_id, session_id, original_filename, mime_type, file_size, file_extension, is_text, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`,
+			).bind(fileId, sessionId, item.filename, item.mimeType, item.size, getFileExtension(item.filename), item.isText, timestamp),
+		);
+		uploadedFiles.push({ fileId, filename: item.filename, isText: item.isText });
 	}
 
 	// Execute all operations in parallel: R2 storage + database batch
@@ -375,81 +418,77 @@ async function handleCompleteUpload(request: Request, env: Env, sessionId: strin
 		return new Response('Invalid session', { status: 400, headers: corsHeaders });
 	}
 
-	// Parse request body
-	const body: CompleteUploadRequest = await request.json();
+	// Parse and validate request body
+	const body = await readJson<CompleteUploadRequest>(request);
+	if (!body) {
+		return badRequest('Invalid JSON body', corsHeaders);
+	}
 	const { fileIds, validityDays } = body;
 
-	// Validate fileIds
-	for (const fileId of fileIds) {
-		if (!isValidUUID(fileId)) {
-			return new Response('Invalid file ID format', { status: 400, headers: corsHeaders });
-		}
+	if (!Array.isArray(fileIds) || fileIds.length === 0) {
+		return badRequest('fileIds must be a non-empty array', corsHeaders);
+	}
+	if (!fileIds.every((fileId) => typeof fileId === 'string' && isValidUUID(fileId))) {
+		return badRequest('Invalid file ID format', corsHeaders);
+	}
+	if (!isValidValidityDays(validityDays)) {
+		return badRequest('validityDays must be one of 1, 3, 7, 15, or -1 (permanent)', corsHeaders);
+	}
+	const uniqueFileIds = [...new Set(fileIds)];
+
+	// Validate before changing anything, so a rejected request leaves the session open to retry
+	const ownedFiles = await env.DB.prepare(
+		`
+		SELECT COUNT(*) as count FROM files
+		WHERE file_id IN (${uniqueFileIds.map(() => '?').join(',')}) AND session_id = ?
+	`,
+	)
+		.bind(...uniqueFileIds, sessionId)
+		.first<{ count: number }>();
+
+	if (ownedFiles?.count !== uniqueFileIds.length) {
+		return badRequest('Some files do not belong to this session', corsHeaders);
 	}
 
-	// Generate unique retrieval code and calculate expiry
-	const retrievalCode = generateRetrievalCode();
 	const expiryDate = calculateExpiry(validityDays);
 	const timestamp = getCurrentTimestamp();
 
-	// Batch all validation and update operations for better performance
-	const operations = [
-		// Validate file ownership
-		env.DB.prepare(
-			`
-			SELECT COUNT(*) as count FROM files 
-			WHERE file_id IN (${fileIds.map(() => '?').join(',')}) AND session_id = ?
-		`,
-		).bind(...fileIds, sessionId),
+	// retrieval_code is UNIQUE, so a collision fails the UPDATE; retry with a fresh code
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const retrievalCode = generateRetrievalCode();
+		let changes: number;
+		try {
+			const result = await env.DB.prepare(
+				`
+				UPDATE sessions
+				SET retrieval_code = ?, upload_complete = TRUE, expiry_date = ?, updated_at = ?
+				WHERE session_id = ? AND upload_complete = FALSE
+			`,
+			)
+				.bind(retrievalCode, expiryDate, timestamp, sessionId)
+				.run();
+			changes = result.meta.changes;
+		} catch (error) {
+			if (String(error).includes('UNIQUE')) continue;
+			throw error;
+		}
 
-		// Check retrieval code uniqueness
-		env.DB.prepare(
-			`
-			SELECT retrieval_code FROM sessions WHERE retrieval_code = ?
-		`,
-		).bind(retrievalCode),
+		if (changes === 0) {
+			return new Response('Session not found or already completed', { status: 404, headers: corsHeaders });
+		}
 
-		// Update session (will only succeed if session exists and not completed)
-		env.DB.prepare(
-			`
-			UPDATE sessions 
-			SET retrieval_code = ?, upload_complete = TRUE, expiry_date = ?, updated_at = ?
-			WHERE session_id = ? AND upload_complete = FALSE
-		`,
-		).bind(retrievalCode, expiryDate, timestamp, sessionId),
-	];
+		const response: CompleteUploadResponse = {
+			retrievalCode,
+			expiryDate: expiryDate ? new Date(expiryDate * 1000).toISOString() : null,
+		};
 
-	const results = await env.DB.batch(operations);
-
-	// Validate results from batch operations
-	const fileCheckResult = results[0].results[0] as { count: number };
-	const retrievalCodeCheck = results[1].results[0];
-	const updateResult = results[2];
-
-	// Check if all files belong to this session
-	if (fileCheckResult.count !== fileIds.length) {
-		return new Response('Some files do not belong to this session', { status: 400, headers: corsHeaders });
+		return new Response(JSON.stringify(response), {
+			status: 200,
+			headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+		});
 	}
 
-	// Check for retrieval code collision
-	if (retrievalCodeCheck) {
-		// Retrieval code collision - in production, implement retry logic
-		return new Response('Failed to generate unique retrieval code', { status: 500, headers: corsHeaders });
-	}
-
-	// Check if session update was successful
-	if (updateResult.meta.changes === 0) {
-		return new Response('Session not found or already completed', { status: 404, headers: corsHeaders });
-	}
-
-	const response: CompleteUploadResponse = {
-		retrievalCode,
-		expiryDate: expiryDate ? new Date(expiryDate * 1000).toISOString() : null,
-	};
-
-	return new Response(JSON.stringify(response), {
-		status: 200,
-		headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-	});
+	return new Response('Failed to generate unique retrieval code', { status: 500, headers: corsHeaders });
 }
 
 // GET /api/retrieve/:retrievalCode - Get chest contents
@@ -616,12 +655,28 @@ async function handleCreateMultipartUpload(
 	}
 
 	// Parse request body
-	const body: CreateMultipartUploadRequest = await request.json();
+	const body = await readJson<CreateMultipartUploadRequest>(request);
+	if (!body) {
+		return badRequest('Invalid JSON body', corsHeaders);
+	}
 	const { filename, mimeType, fileSize } = body;
 
 	// Validate inputs
-	if (!filename || !mimeType || !fileSize || fileSize <= 0) {
-		return new Response('Invalid multipart upload parameters', { status: 400, headers: corsHeaders });
+	if (
+		typeof filename !== 'string' ||
+		!filename ||
+		typeof mimeType !== 'string' ||
+		!mimeType ||
+		!Number.isSafeInteger(fileSize) ||
+		fileSize <= 0
+	) {
+		return badRequest('Invalid multipart upload parameters', corsHeaders);
+	}
+
+	// The declared size is checked here and enforced against the real object size on completion
+	const maxBytes = getMaxChestBytes(env.MAX_CHEST_BYTES);
+	if ((await getSessionBytes(env, sessionId)) + fileSize > maxBytes) {
+		return chestTooLarge(maxBytes, corsHeaders);
 	}
 
 	const fileId = generateUUID();
@@ -683,15 +738,23 @@ async function handleUploadPart(
 		return new Response('Invalid session or file ID format', { status: 400, headers: corsHeaders });
 	}
 
-	// Validate part number
-	if (partNumber < 1 || partNumber > 10000) {
-		return new Response('Invalid part number', { status: 400, headers: corsHeaders });
+	// Validate part number (parseInt gives NaN for non-numeric input)
+	if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
+		return badRequest('Invalid part number', corsHeaders);
+	}
+
+	// A multipart token outlives chest completion, so check the chest is still open
+	if (!(await isSessionOpen(env, sessionId))) {
+		return new Response('Session not found or already completed', { status: 404, headers: corsHeaders });
 	}
 
 	// Get request body as ArrayBuffer
 	const body = await request.arrayBuffer();
 	if (!body || body.byteLength === 0) {
-		return new Response('Empty part body', { status: 400, headers: corsHeaders });
+		return badRequest('Empty part body', corsHeaders);
+	}
+	if (body.byteLength > payload.fileSize) {
+		return badRequest('Part is larger than the declared file size', corsHeaders);
 	}
 
 	// Resume multipart upload using uploadId from JWT
@@ -740,21 +803,45 @@ async function handleCompleteMultipartUpload(
 		return new Response('Invalid session or file ID format', { status: 400, headers: corsHeaders });
 	}
 
+	// A multipart token outlives chest completion, so check the chest is still open
+	if (!(await isSessionOpen(env, sessionId))) {
+		return new Response('Session not found or already completed', { status: 404, headers: corsHeaders });
+	}
+
 	// Parse request body
-	const body: CompleteMultipartUploadRequest = await request.json();
+	const body = await readJson<CompleteMultipartUploadRequest>(request);
+	if (!body) {
+		return badRequest('Invalid JSON body', corsHeaders);
+	}
 	const { parts } = body;
 
 	// Validate parts array
-	if (!Array.isArray(parts) || parts.length === 0) {
-		return new Response('Invalid parts array', { status: 400, headers: corsHeaders });
+	if (
+		!Array.isArray(parts) ||
+		parts.length === 0 ||
+		!parts.every((part) => Number.isInteger(part?.partNumber) && typeof part?.etag === 'string')
+	) {
+		return badRequest('Invalid parts array', corsHeaders);
 	}
 
 	// Sort parts by part number to ensure correct order
 	const sortedParts = parts.sort((a, b) => a.partNumber - b.partNumber);
 
 	// Resume multipart upload and complete it using uploadId from JWT
-	const multipartUpload = env.R2_STORAGE.resumeMultipartUpload(`${sessionId}/${fileId}`, payload.uploadId);
-	await multipartUpload.complete(sortedParts);
+	const key = `${sessionId}/${fileId}`;
+	const multipartUpload = env.R2_STORAGE.resumeMultipartUpload(key, payload.uploadId);
+	const object = await multipartUpload.complete(sortedParts);
+
+	// Trust the assembled object's real size, not the size the client declared
+	if (object.size !== payload.fileSize) {
+		await env.R2_STORAGE.delete(key);
+		return badRequest('Uploaded size does not match the declared file size', corsHeaders);
+	}
+	const maxBytes = getMaxChestBytes(env.MAX_CHEST_BYTES);
+	if ((await getSessionBytes(env, sessionId)) + object.size > maxBytes) {
+		await env.R2_STORAGE.delete(key);
+		return chestTooLarge(maxBytes, corsHeaders);
+	}
 
 	// Now insert the file record into database (only after successful completion)
 	const timestamp = getCurrentTimestamp();
@@ -764,7 +851,7 @@ async function handleCompleteMultipartUpload(
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 	)
-		.bind(fileId, sessionId, payload.filename, payload.mimeType, payload.fileSize, getFileExtension(payload.filename), false, timestamp)
+		.bind(fileId, sessionId, payload.filename, payload.mimeType, object.size, getFileExtension(payload.filename), false, timestamp)
 		.run();
 
 	const response: CompleteMultipartUploadResponse = {
@@ -776,123 +863,4 @@ async function handleCompleteMultipartUpload(
 		status: 200,
 		headers: { ...corsHeaders, 'Content-Type': 'application/json' },
 	});
-}
-
-// Cleanup expired content (runs every hour via cron)
-async function cleanupExpiredContent(env: Env): Promise<{
-	expiredSessions: number;
-	deletedFiles: number;
-	r2ObjectsDeleted: number;
-	incompleteSessions: number;
-	errors: string[];
-}> {
-	const currentTimestamp = getCurrentTimestamp();
-	const errors: string[] = [];
-	let expiredSessions = 0;
-	let deletedFiles = 0;
-	let r2ObjectsDeleted = 0;
-	let incompleteSessions = 0;
-
-	console.log('🔍 Starting cleanup for timestamp:', currentTimestamp);
-
-	try {
-		// 1. Find expired sessions (permanent sessions have expiry_date = NULL, so they're excluded)
-		const expiredSessionsResult = await env.DB.prepare(
-			`
-			SELECT session_id, retrieval_code FROM sessions 
-			WHERE expiry_date IS NOT NULL AND expiry_date <= ?
-		`,
-		)
-			.bind(currentTimestamp)
-			.all();
-
-		console.log(`📋 Found ${expiredSessionsResult.results.length} expired sessions`);
-
-		// 2. Find incomplete sessions older than 48 hours (matching multipart JWT validity)
-		const incompleteSessionsResult = await env.DB.prepare(
-			`
-			SELECT session_id FROM sessions 
-			WHERE upload_complete = FALSE AND created_at <= ?
-		`,
-		)
-			.bind(currentTimestamp - 48 * 60 * 60)
-			.all();
-
-		console.log(`📋 Found ${incompleteSessionsResult.results.length} incomplete sessions (>48h old)`);
-
-		// Combine expired and incomplete sessions for cleanup
-		const allSessionsToCleanup = [
-			...expiredSessionsResult.results.map((s) => ({ session_id: s.session_id, reason: 'expired' })),
-			...incompleteSessionsResult.results.map((s) => ({ session_id: s.session_id, reason: 'incomplete' })),
-		];
-
-		console.log(`🗑️  Total sessions to cleanup: ${allSessionsToCleanup.length}`);
-
-		// Process each session
-		for (const session of allSessionsToCleanup) {
-			const sessionId = session.session_id as string;
-			const reason = session.reason;
-
-			try {
-				// 3. Get file count for logging
-				const filesResult = await env.DB.prepare(
-					`
-					SELECT COUNT(*) as count FROM files WHERE session_id = ?
-				`,
-				)
-					.bind(sessionId)
-					.first();
-
-				const fileCount = (filesResult?.count as number) || 0;
-				console.log(`📁 Session ${sessionId} (${reason}) has ${fileCount} files`);
-
-				// 4. Delete ALL R2 objects for this session using prefix deletion
-				try {
-					const listResult = await env.R2_STORAGE.list({ prefix: `${sessionId}/` });
-
-					if (listResult.objects.length > 0) {
-						// Delete all objects with this session prefix
-						const deletePromises = listResult.objects.map((obj) => env.R2_STORAGE.delete(obj.key));
-						await Promise.all(deletePromises);
-						r2ObjectsDeleted += listResult.objects.length;
-						console.log(`🗑️ Deleted ${listResult.objects.length} R2 objects for session ${sessionId}`);
-					}
-				} catch (error) {
-					errors.push(`Failed to delete R2 objects for session ${sessionId}: ${error}`);
-				}
-
-				// 5. Delete database records (files first due to foreign key constraint)
-				await env.DB.prepare(`DELETE FROM files WHERE session_id = ?`).bind(sessionId).run();
-				deletedFiles += fileCount;
-
-				await env.DB.prepare(`DELETE FROM sessions WHERE session_id = ?`).bind(sessionId).run();
-
-				if (reason === 'expired') {
-					expiredSessions++;
-				} else {
-					incompleteSessions++;
-				}
-
-				console.log(`✅ Cleaned up session ${sessionId} (${reason}) with ${fileCount} files`);
-			} catch (error) {
-				errors.push(`Failed to cleanup session ${sessionId}: ${error}`);
-				console.error(`❌ Error cleaning session ${sessionId}:`, error);
-			}
-		}
-
-		console.log(
-			`🧹 Cleanup summary: ${expiredSessions + incompleteSessions} sessions, ${deletedFiles} files, ${r2ObjectsDeleted} R2 objects`,
-		);
-	} catch (error) {
-		errors.push(`Database query failed: ${error}`);
-		console.error('❌ Database error during cleanup:', error);
-	}
-
-	return {
-		expiredSessions,
-		deletedFiles,
-		r2ObjectsDeleted,
-		incompleteSessions,
-		errors,
-	};
 }

@@ -92,7 +92,7 @@ export function FileUpload({ onFilesChange, files }: FileUploadProps) {
         <div className="mt-4 space-y-2">
           <h3 className="font-medium">Selected Files ({files.length})</h3>
           {files.map((file, index) => (
-            <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded">
+            <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-sm">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{file.name}</p>
                 <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>

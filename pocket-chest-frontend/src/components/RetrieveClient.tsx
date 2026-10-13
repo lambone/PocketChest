@@ -122,7 +122,7 @@ export function RetrieveClient({ code, onBack }: RetrieveClientProps) {
                       ? file.filename.slice(0, -4)
                       : file.filename;
                     return (
-                    <div key={file.fileId} className="flex-shrink-0 w-80 border border-gray-200 rounded-lg p-4">
+                    <div key={file.fileId} className="shrink-0 w-80 border border-gray-200 rounded-lg p-4">
                       <h3 className="font-semibold text-lg text-gray-900 mb-2 truncate">
                         {displayName}
                       </h3>
@@ -132,13 +132,13 @@ export function RetrieveClient({ code, onBack }: RetrieveClientProps) {
                       
                       {file.content && (
                         <div>
-                          <div className="bg-gray-50 rounded p-3 max-h-40 overflow-y-auto mb-3">
+                          <div className="bg-gray-50 rounded-sm p-3 max-h-40 overflow-y-auto mb-3">
                             <pre className="text-sm whitespace-pre-wrap font-mono">{file.content}</pre>
                           </div>
                           <div className="flex gap-2">
                             <button
                               onClick={() => copyTextToClipboard(file.content!, file.fileId)}
-                              className={`flex-1 text-xs px-3 py-2 rounded transition-colors ${
+                              className={`flex-1 text-xs px-3 py-2 rounded-sm transition-colors ${
                                 copiedFileId === file.fileId
                                   ? 'bg-green-500 text-white'
                                   : 'bg-blue-500 text-white hover:bg-blue-600'
@@ -148,7 +148,7 @@ export function RetrieveClient({ code, onBack }: RetrieveClientProps) {
                             </button>
                             <button
                               onClick={() => handleDownload(file)}
-                              className="flex-1 text-xs px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                              className="flex-1 text-xs px-3 py-2 bg-green-500 text-white rounded-sm hover:bg-green-600"
                             >
                               📄 Download as .txt
                             </button>
@@ -183,10 +183,10 @@ export function RetrieveClient({ code, onBack }: RetrieveClientProps) {
                           </p>
                         </div>
                         
-                        <div className="ml-4 flex-shrink-0">
+                        <div className="ml-4 shrink-0">
                           <button
                             onClick={() => handleDownload(file)}
-                            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                            className="px-4 py-2 bg-green-500 text-white rounded-sm hover:bg-green-600"
                           >
                             Download
                           </button>

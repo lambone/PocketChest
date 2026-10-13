@@ -140,7 +140,7 @@ PocketChest-OpenSource/
 - **TOTP Authentication** - Optional two-factor authentication
 - **JWT Session Tokens** - Secure session management
 - **Auto Expiration** - Files automatically deleted after expiry
-- **Automated Cleanup** - Hourly cron job removes expired content
+- **Automated Cleanup** - Daily cron job removes expired content
 - **Input Validation** - File type and size restrictions
 
 ## 🚢 Deployment

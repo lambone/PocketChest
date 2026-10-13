@@ -203,7 +203,7 @@ wrangler deploy
 # Cron job for cleanup is configured in wrangler.jsonc and deploys automatically
 ```
 
-**About cleanup:** the hourly job deletes expired chests and uploads left unfinished for 72 hours, up to 50 chests per run. It can't see large-file uploads that were started but never finished; R2's default bucket rule ("Abort incomplete multipart uploads after 7 days") removes those. Check that the rule exists with `wrangler r2 bucket lifecycle list pocket-chest`, and don't remove it.
+**About cleanup:** the daily job (16:00 UTC) deletes expired chests and uploads left unfinished for 72 hours, up to 200 chests per run. Expired chests stop working at their expiry time regardless; cleanup only frees their storage. It can't see large-file uploads that were started but never finished; R2's default bucket rule ("Abort incomplete multipart uploads after 7 days") removes those. Check that the rule exists with `wrangler r2 bucket lifecycle list pocket-chest`, and don't remove it.
 
 Your backend will be available at: `https://your-worker-name.your-subdomain.workers.dev` (or your custom domain if configured)
 
@@ -319,9 +319,9 @@ wrangler d1 execute pocket-chest --command "SELECT COUNT(*) FROM sessions;" --re
 
 ### Cleanup Job
 
-The backend includes an automated cleanup job that runs hourly to:
+The backend includes an automated cleanup job that runs daily (16:00 UTC) to:
 - Delete expired sessions and files
-- Clean up incomplete uploads older than 24 hours
+- Clean up incomplete uploads older than 72 hours
 - Remove associated R2 storage objects
 
 ## Security Considerations

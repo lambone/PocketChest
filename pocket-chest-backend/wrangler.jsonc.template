@@ -47,7 +47,9 @@
 	// ],
 	"workers_dev": true,
 	"triggers": {
-		"crons": ["0 * * * *"],
+		// Daily cleanup at 16:00 UTC (~3am Sydney). Expired chests stop working at their
+		// expiry time regardless; this only frees their storage.
+		"crons": ["0 16 * * *"],
 	},
 	// Per-IP rate limits on endpoints that accept guessable codes.
 	// namespace_id is any integer string unique within your Cloudflare account.

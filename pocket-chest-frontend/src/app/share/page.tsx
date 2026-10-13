@@ -9,7 +9,7 @@ import { TOTPModal } from '@/components/TOTPModal';
 import { UploadProgress } from '@/components/UploadProgress';
 import { usePocketChest } from '@/hooks/usePocketChest';
 import { PocketChestAPI } from '@/lib/api';
-import { TextItem, ValidityDays } from '@/lib/types';
+import { TextItem, UploadedFile, ValidityDays } from '@/lib/types';
 
 export default function SharePage() {
   const [files, setFiles] = useState<File[]>([]);
@@ -17,6 +17,10 @@ export default function SharePage() {
   const [validityDays, setValidityDays] = useState<ValidityDays>(7);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Files already uploaded into the current (not yet shared) chest via "Upload & Add More"
+  const [chestFiles, setChestFiles] = useState<UploadedFile[]>([]);
+  // Whether the last upload attempt was meant to generate the code, so Retry repeats it
+  const [lastFinalize, setLastFinalize] = useState(true);
   
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -99,17 +103,15 @@ export default function SharePage() {
     setTotpError('');
   };
 
-  const handleUpload = async () => {
-    if (files.length === 0 && textItems.length === 0) {
-      alert('Please add files or text to share');
-      return;
-    }
+  const hasPendingItems = files.length > 0 || textItems.length > 0;
 
+  const runUpload = async (finalize: boolean, retry = false) => {
     if (!sessionData) {
       alert('Session not ready. Please try again.');
       return;
     }
-    
+    setLastFinalize(finalize);
+
     // Scroll to top to show upload progress
     setTimeout(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -117,16 +119,23 @@ export default function SharePage() {
       document.body.scrollTop = 0;
       document.documentElement.scrollTop = 0;
     }, 100);
-    
+
+    const options = { finalize, priorFileIds: chestFiles.map((f) => f.fileId) };
     try {
-      const result = await uploadWithSession(
+      const result = await (retry ? retryUpload : uploadWithSession)(
         sessionData.sessionId,
         sessionData.uploadToken,
         files,
         textItems,
-        validityDays
+        validityDays,
+        options
       );
-      setUploadResult(result.retrievalCode);
+      if (finalize) {
+        setUploadResult(result.retrievalCode ?? null);
+        setChestFiles([]);
+      } else {
+        setChestFiles((prev) => [...prev, ...result.uploadedFiles]);
+      }
       setFiles([]);
       setTextItems([]);
     } catch (error) {
@@ -135,24 +144,20 @@ export default function SharePage() {
     }
   };
 
-  const handleRetry = async () => {
-    if (!sessionData) return;
-    
-    try {
-      const result = await retryUpload(
-        sessionData.sessionId,
-        sessionData.uploadToken,
-        files,
-        textItems,
-        validityDays
-      );
-      setUploadResult(result.retrievalCode);
-      setFiles([]);
-      setTextItems([]);
-    } catch (error) {
-      console.error('Retry failed:', error);
+  const handleUpload = () => {
+    if (!hasPendingItems && chestFiles.length === 0) {
+      alert('Please add files or text to share');
+      return;
     }
+    runUpload(true);
   };
+
+  const handleAddMore = () => {
+    if (!hasPendingItems) return;
+    runUpload(false);
+  };
+
+  const handleRetry = () => runUpload(lastFinalize, true);
 
   // A session is finished once its retrieval code is issued, so sharing more
   // files needs a new session (and a fresh TOTP code when TOTP is required)
@@ -161,6 +166,7 @@ export default function SharePage() {
     setCopied(false);
     clearError();
     setSessionData(null);
+    setChestFiles([]);
     setIsAuthenticated(false);
 
     if (requireTOTP) {
@@ -342,6 +348,24 @@ export default function SharePage() {
           onCancel={handleCancel}
         />
 
+        {chestFiles.length > 0 && (
+          <div className="mb-6 p-6 bg-blue-50 border border-blue-200 rounded-lg">
+            <h2 className="text-lg font-semibold text-blue-900 mb-1">
+              📦 In this chest ({chestFiles.length} {chestFiles.length === 1 ? 'item' : 'items'})
+            </h2>
+            <p className="text-sm text-blue-800 mb-3">
+              Uploaded, not shared yet. Add more below, then generate one code for everything.
+            </p>
+            <ul className="space-y-1 max-h-48 overflow-y-auto">
+              {chestFiles.map((file) => (
+                <li key={file.fileId} className="text-sm text-gray-700 truncate">
+                  {file.isText ? '📝' : '📄'} {file.filename}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="bg-white rounded-lg shadow-md p-8">
           <div className="space-y-8">
             {/* Text Section */}
@@ -358,20 +382,34 @@ export default function SharePage() {
             
             <ExpirySelector value={validityDays} onChange={setValidityDays} />
             
-            <button
-              onClick={handleUpload}
-              disabled={isUploading || (files.length === 0 && textItems.length === 0)}
-              className="w-full py-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-lg"
-            >
-              {isUploading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <div className="animate-spin text-xl">⏳</div>
-                  Uploading...
-                </span>
-              ) : (
-                'Upload & Generate Code'
-              )}
-            </button>
+            <div className="space-y-3">
+              <button
+                onClick={handleUpload}
+                disabled={isUploading || (!hasPendingItems && chestFiles.length === 0)}
+                className="w-full py-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-lg"
+              >
+                {isUploading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <div className="animate-spin text-xl">⏳</div>
+                    Uploading...
+                  </span>
+                ) : hasPendingItems ? (
+                  'Upload & Generate Code'
+                ) : (
+                  'Generate Code'
+                )}
+              </button>
+              <button
+                onClick={handleAddMore}
+                disabled={isUploading || !hasPendingItems}
+                className="w-full py-3 bg-white text-blue-600 border-2 border-blue-500 rounded-lg hover:bg-blue-50 disabled:text-gray-400 disabled:border-gray-300 disabled:bg-white disabled:cursor-not-allowed font-semibold"
+              >
+                Upload & Add More
+              </button>
+              <p className="text-xs text-gray-500 text-center">
+                Missed something? Use <span className="font-medium">Upload &amp; Add More</span> to keep adding files before generating the code.
+              </p>
+            </div>
           </div>
         </div>
       </div>
